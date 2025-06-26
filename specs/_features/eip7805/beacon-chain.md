@@ -11,11 +11,14 @@
   - [New containers](#new-containers)
     - [`InclusionList`](#inclusionlist)
     - [`SignedInclusionList`](#signedinclusionlist)
+    - [`InclusionListStore`](#inclusionliststore)
 - [Helper functions](#helper-functions)
   - [Predicates](#predicates)
     - [New `is_valid_inclusion_list_signature`](#new-is_valid_inclusion_list_signature)
   - [Beacon State accessors](#beacon-state-accessors)
     - [New `get_inclusion_list_committee`](#new-get_inclusion_list_committee)
+    - [New `get_inclusion_list_store`](#new-get_inclusion_list_store)
+    - [New `store_inclusion_list`](#new-store_inclusion_list)
     - [New `get_inclusion_list_transactions`](#new-get_inclusion_list_transactions)
 - [Beacon chain state transition function](#beacon-chain-state-transition-function)
   - [Execution engine](#execution-engine)
@@ -77,6 +80,15 @@ class SignedInclusionList(Container):
     signature: BLSSignature
 ```
 
+#### `InclusionListStore`
+
+```python
+@dataclass
+class InclusionListStore(object):
+    inclusion_lists: Dict[Tuple[Slot, Root], Set[InclusionList]] = field(default_factory=dict)
+    equivocators: Dict[Tuple[Slot, Root], Set[ValidatorIndex]] = field(default_factory=dict)
+```
+
 ## Helper functions
 
 ### Predicates
@@ -111,36 +123,83 @@ def get_inclusion_list_committee(
     indices = get_active_validator_indices(state, epoch)
     start = (slot % SLOTS_PER_EPOCH) * INCLUSION_LIST_COMMITTEE_SIZE
     end = start + INCLUSION_LIST_COMMITTEE_SIZE
-    return [
-        indices[compute_shuffled_index(uint64(i % len(indices)), uint64(len(indices)), seed)]
-        for i in range(start, end)
-    ]
+    return Vector[ValidatorIndex, INCLUSION_LIST_COMMITTEE_SIZE](
+        [
+            indices[compute_shuffled_index(uint64(i % len(indices)), uint64(len(indices)), seed)]
+            for i in range(start, end)
+        ]
+    )
+```
+
+#### New `get_inclusion_list_store`
+
+```python
+def get_inclusion_list_store() -> InclusionListStore:
+    # `cached_or_new_inclusion_list_store` is implementation and context dependent.
+    # It returns the cached `InclusionListStore`; if none exists,
+    # it initializes a new instance, caches it and returns it.
+    inclusion_list_store = cached_or_new_inclusion_list_store()
+
+    return inclusion_list_store
+```
+
+#### New `store_inclusion_list`
+
+```python
+def store_inclusion_list(inclusion_list: InclusionList) -> None:
+    inclusion_list_store = get_inclusion_list_store()
+
+    validator_index = inclusion_list.validator_index
+    key = (inclusion_list.slot, inclusion_list.inclusion_list_committee_root)
+
+    inclusion_lists = inclusion_list_store.inclusion_lists.setdefault(key, set())
+    equivocators = inclusion_list_store.equivocators.setdefault(key, set())
+
+    if validator_index in equivocators:
+        return
+
+    for stored_inclusion_list in inclusion_lists:
+        if stored_inclusion_list.validator_index != validator_index:
+            continue
+
+        if stored_inclusion_list != inclusion_list:
+            equivocators.add(validator_index)
+            inclusion_lists.remove(stored_inclusion_list)
+
+        # Whether it was an equivocation or not, we have processed this `inclusion_list`.
+        return
+
+    # Store this first `inclusion_list` from `validator_index`.
+    inclusion_lists.add(inclusion_list)
 ```
 
 #### New `get_inclusion_list_transactions`
 
-The abstract function `get_inclusion_list_transactions` returns a list of unique
-transactions from all valid and non-equivocating `InclusionList`s that were
-received in a timely manner on the p2p network for the given slot and for which
-the `inclusion_list_committee_root` in the `InclusionList` matches the one
+*Note*: `get_inclusion_list_transactions` returns a list of unique transactions
+from all valid and non-equivocating `InclusionList`s that were received in a
+timely manner on the p2p network for the given slot and for which the
+`inclusion_list_committee_root` in the `InclusionList` matches the one
 calculated based on the current state.
-
-A block MUST NOT be considered valid unless it contains all inclusion list
-transactions or cannot append any missing inclusion list transactions at the end
-of the payload.
-
-*Note*: Invalid or equivocating `InclusionList`s received on the p2p network
-MUST NOT invalidate a block that is otherwise valid and available.
 
 ```python
 def get_inclusion_list_transactions(state: BeaconState, slot: Slot) -> Sequence[Transaction]:
-    # `retrieve_inclusion_list_transactions` is implementation and context dependent.
-    # It returns all unique transactions from valid, non-equivocating and timely
-    # `InclusionList`s for the given `slot`. These `InclusionList`s must also have an
-    # `inclusion_list_committee_root` that matches the one derived from the current `state`.
-    inclusion_list_transactions = retrieve_inclusion_list_transactions(state, slot)
+    inclusion_list_store = get_inclusion_list_store()
 
-    return inclusion_list_transactions
+    inclusion_list_committee = get_inclusion_list_committee(state, slot)
+    inclusion_list_committee_root = hash_tree_root(inclusion_list_committee)
+    key = (slot, inclusion_list_committee_root)
+
+    inclusion_lists = inclusion_list_store.inclusion_lists.setdefault(key, set())
+    equivocators = inclusion_list_store.equivocators.setdefault(key, set())
+
+    inclusion_list_transactions = {
+        transaction
+        for inclusion_list in inclusion_lists
+        if inclusion_list.validator_index not in equivocators
+        for transaction in inclusion_list.transactions
+    }
+
+    return list(inclusion_list_transactions)
 ```
 
 ## Beacon chain state transition function

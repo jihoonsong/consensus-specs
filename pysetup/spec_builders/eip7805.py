@@ -14,9 +14,9 @@ from eth2spec.electra import {preset_name} as electra
     @classmethod
     def sundry_functions(cls) -> str:
         return """
-def retrieve_inclusion_list_transactions(state: BeaconState, slot: Slot) -> Sequence[Transaction]:
+def cached_or_new_inclusion_list_store() -> InclusionListStore:
     # pylint: disable=unused-argument
-    return []
+    return InclusionListStore()
 """
 
     @classmethod

@@ -882,6 +882,10 @@ def on_inclusion_list(store: Store, signed_inclusion_list: SignedInclusionList) 
     """
     inclusion_list = signed_inclusion_list.message
 
+    # Reject inclusion lists for past slots
+    if inclusion_list.slot < get_current_slot(store):
+        return
+
     inclusion_list_store = get_inclusion_list_store()
 
     seconds_since_genesis = store.time - store.genesis_time

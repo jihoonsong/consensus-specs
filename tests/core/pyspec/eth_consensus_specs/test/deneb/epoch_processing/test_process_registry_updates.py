@@ -30,9 +30,7 @@ def run_test_activation_churn_limit(spec, state):
 
     validator_count_0 = len(state.validators)
 
-    balance = (
-        spec.MIN_ACTIVATION_BALANCE if is_post_electra(spec) else get_min_activation_balance(spec)
-    )
+    balance = get_min_activation_balance(spec)
 
     for i in range(mock_activations):
         index = validator_count_0 + i

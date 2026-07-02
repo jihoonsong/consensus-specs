@@ -41,7 +41,7 @@ def test_new_deposit_max(spec, state):
 def test_new_deposit_over_max(spec, state):
     # fresh deposit = next validator index = validator appended to registry
     validator_index = len(state.validators)
-    # just 1 over the limit, effective balance should be set MAX_EFFECTIVE_BALANCE during processing
+    # just 1 over the limit, effective balance should be capped at the limit during processing
     amount = get_min_activation_balance(spec) + 1
     deposit = prepare_state_and_deposit(spec, state, validator_index, amount, signed=True)
 

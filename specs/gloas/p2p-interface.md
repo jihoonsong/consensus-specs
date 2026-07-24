@@ -838,6 +838,10 @@ def validate_execution_payload_bid_gossip(
     if bid_key in seen.execution_payload_bids:
         raise GossipIgnore("already seen valid bid for this slot and builder")
 
+    # [IGNORE] The bid's parent block hash is the hash of a known execution payload
+    if bid.parent_block_hash not in seen.execution_payloads:
+        raise GossipIgnore("bid's parent block hash is not a known execution payload")
+
     # [IGNORE] This is the highest value bid seen for the slot and parent
     best_bid_key = (bid.slot, bid.parent_block_hash, bid.parent_block_root)
     if best_bid_key in seen.best_execution_payload_bid:
@@ -852,12 +856,6 @@ def validate_execution_payload_bid_gossip(
     if bid.execution_payment != 0:
         raise GossipReject("bid's execution payment must be zero")
 
-    # [REJECT] The bid's blob KZG commitment count is within the per-epoch limit
-    proposal_epoch = compute_epoch_at_slot(bid.slot)
-    max_blobs = get_blob_parameters(proposal_epoch).max_blobs_per_block
-    if len(bid.blob_kzg_commitments) > max_blobs:
-        raise GossipReject("too many blob kzg commitments")
-
     # [IGNORE] The bid's parent block root is a known beacon block
     # (MAY be queued until parent is retrieved)
     if bid.parent_block_root not in store.blocks:
@@ -871,8 +869,14 @@ def validate_execution_payload_bid_gossip(
         raise GossipIgnore("state is not the bid's parent block post-state")
 
     # [IGNORE] The bid's slot is within the parent's proposer lookahead
+    proposal_epoch = compute_epoch_at_slot(bid.slot)
     if proposal_epoch > get_current_epoch(state) + Epoch(MIN_SEED_LOOKAHEAD):
         raise GossipIgnore("bid's slot is past the parent's proposer lookahead")
+
+    # [REJECT] The bid's blob KZG commitment count is within the per-epoch limit
+    max_blobs = get_blob_parameters(proposal_epoch).max_blobs_per_block
+    if len(bid.blob_kzg_commitments) > max_blobs:
+        raise GossipReject("too many blob kzg commitments")
 
     # [IGNORE] The matching proposer preferences have been seen
     dependent_root = get_shuffling_dependent_root(store, bid.parent_block_root, proposal_epoch)
@@ -885,10 +889,6 @@ def validate_execution_payload_bid_gossip(
     # [IGNORE] The bid's fee recipient matches the proposer's preference
     if bid.fee_recipient != proposer_preferences.fee_recipient:
         raise GossipIgnore("bid's fee recipient does not match the proposer's preference")
-
-    # [IGNORE] The bid's parent block hash is the hash of a known execution payload
-    if bid.parent_block_hash not in seen.execution_payloads:
-        raise GossipIgnore("bid's parent block hash is not a known execution payload")
 
     # [IGNORE] The bid's gas limit is compatible with the proposer's target gas limit
     parent_gas_limit = seen.execution_payloads[bid.parent_block_hash].gas_limit

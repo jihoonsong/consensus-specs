@@ -13,6 +13,7 @@ from eth_consensus_specs.test.helpers.execution_payload import (
 from eth_consensus_specs.test.helpers.fork_choice import (
     get_genesis_forkchoice_store_and_block,
 )
+from eth_consensus_specs.test.helpers.gloas.bid import record_block_in_store
 from eth_consensus_specs.test.helpers.gossip import (
     get_filename,
     get_seen,
@@ -99,9 +100,7 @@ def prepare_same_slot_attestation(spec, state, payload_index):
     signed_anchor = wrap_genesis_block(spec, anchor_block)
     block = build_empty_block_for_next_slot(spec, state)
     signed_block = state_transition_and_sign_block(spec, state, block)
-    block_root = signed_block.message.hash_tree_root()
-    store.blocks[block_root] = signed_block.message
-    store.block_states[block_root] = state.copy()
+    block_root = record_block_in_store(spec, store, signed_block, state.copy())
 
     attestation = get_valid_attestation(
         spec,
@@ -231,9 +230,7 @@ def prepare_past_slot_attestation(spec, state, payload_index, install_payload=Fa
     signed_anchor = wrap_genesis_block(spec, anchor_block)
     block = build_empty_block_for_next_slot(spec, state)
     signed_block = state_transition_and_sign_block(spec, state, block)
-    block_root = signed_block.message.hash_tree_root()
-    store.blocks[block_root] = signed_block.message
-    store.block_states[block_root] = state.copy()
+    block_root = record_block_in_store(spec, store, signed_block, state.copy())
 
     signed_envelope = None
     if install_payload:

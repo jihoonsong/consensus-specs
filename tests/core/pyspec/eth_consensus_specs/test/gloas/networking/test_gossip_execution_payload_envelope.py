@@ -10,6 +10,7 @@ from eth_consensus_specs.test.helpers.execution_payload import (
 from eth_consensus_specs.test.helpers.fork_choice import (
     get_genesis_forkchoice_store_and_block,
 )
+from eth_consensus_specs.test.helpers.gloas.bid import record_block_in_store
 from eth_consensus_specs.test.helpers.gossip import (
     get_filename,
     get_seen,
@@ -27,9 +28,7 @@ def setup_store_with_block(spec, state):
     signed_anchor = wrap_genesis_block(spec, anchor_block)
     block = build_empty_block_for_next_slot(spec, state)
     signed_block = state_transition_and_sign_block(spec, state, block)
-    block_root = signed_block.message.hash_tree_root()
-    store.blocks[block_root] = signed_block.message
-    store.block_states[block_root] = state.copy()
+    block_root = record_block_in_store(spec, store, signed_block, state.copy())
     return store, [signed_anchor, signed_block], signed_block, block_root
 
 
@@ -454,9 +453,7 @@ def _assert_envelope_requests(spec, state, execution_requests, expected, reason=
         execution_requests.hash_tree_root()
     )
     signed_block = state_transition_and_sign_block(spec, state, block)
-    block_root = signed_block.message.hash_tree_root()
-    store.blocks[block_root] = signed_block.message
-    store.block_states[block_root] = state.copy()
+    block_root = record_block_in_store(spec, store, signed_block, state.copy())
     blocks = [signed_anchor, signed_block]
 
     yield "state", anchor_state

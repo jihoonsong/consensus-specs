@@ -9,6 +9,7 @@ from eth_consensus_specs.test.helpers.block import (
     build_empty_block,
     build_empty_block_for_next_slot,
 )
+from eth_consensus_specs.test.helpers.gloas.bid import record_block_in_store
 from eth_consensus_specs.test.helpers.gossip import (
     add_pending_block_to_store,
     get_filename,
@@ -1052,9 +1053,7 @@ def test_gossip_inclusion_list__valid_dependent_block_on_fork(spec, state):
         block = build_empty_block_for_next_slot(spec, fork_state)
         block.body.graffiti = spec.Bytes32(b"\x42" * 32)
         signed_fork_block = state_transition_and_sign_block(spec, fork_state, block)
-        block_root = signed_fork_block.message.hash_tree_root()
-        store.blocks[block_root] = signed_fork_block.message
-        store.block_states[block_root] = fork_state.copy()
+        record_block_in_store(spec, store, signed_fork_block, fork_state.copy())
         fork_blocks.append(signed_fork_block)
     dependent_root = fork_blocks[0].message.hash_tree_root()
     assert store.blocks[dependent_root].slot == lookahead_start_slot - 1
@@ -1115,9 +1114,7 @@ def test_gossip_inclusion_list__valid_dependent_block_across_empty_epochs(spec, 
     # Skip two epochs before importing the next block.
     boundary_block = build_empty_block(spec, state, slot=lookahead_start_slot)
     signed_boundary_block = state_transition_and_sign_block(spec, state, boundary_block)
-    boundary_root = signed_boundary_block.message.hash_tree_root()
-    store.blocks[boundary_root] = signed_boundary_block.message
-    store.block_states[boundary_root] = state.copy()
+    boundary_root = record_block_in_store(spec, store, signed_boundary_block, state.copy())
     blocks.append(signed_boundary_block)
     assert (
         spec.get_shuffling_dependent_root(store, boundary_root, spec.Epoch(epoch - 1))

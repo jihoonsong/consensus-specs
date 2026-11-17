@@ -18,11 +18,13 @@ components of the fork choice.
     - [`on_payload_info` execution step](#on_payload_info-execution-step)
     - [`on_execution_payload_envelope` execution step](#on_execution_payload_envelope-execution-step)
     - [`on_payload_attestation_message` execution step](#on_payload_attestation_message-execution-step)
+    - [`on_inclusion_list` execution step](#on_inclusion_list-execution-step)
     - [Checks step](#checks-step)
   - [`attestation_<32-byte-root>.ssz_snappy`](#attestation_32-byte-rootssz_snappy)
   - [`block_<32-byte-root>.ssz_snappy`](#block_32-byte-rootssz_snappy)
   - [`execution_payload_envelope_<32-byte-root>.ssz_snappy`](#execution_payload_envelope_32-byte-rootssz_snappy)
   - [`payload_attestation_message_<32-byte-root>.ssz_snappy`](#payload_attestation_message_32-byte-rootssz_snappy)
+  - [`inclusion_list_<32-byte-root>.ssz_snappy`](#inclusion_list_32-byte-rootssz_snappy)
 - [Condition](#condition)
 
 <!-- mdformat-toc end -->
@@ -223,6 +225,25 @@ This execution step is available for Gloas and later forks.
 
 After this step, the `store` object may have been updated.
 
+#### `on_inclusion_list` execution step
+
+The parameter that is required for executing
+`on_inclusion_list(store, signed_inclusion_list)`.
+
+```yaml
+{
+    inclusion_list: string  -- the name of the `inclusion_list_<32-byte-root>.ssz_snappy` file.
+                               To execute `on_inclusion_list(store, signed_inclusion_list)` with the given inclusion list.
+    valid: bool             -- optional, default to `true`.
+                               If it's `false`, this execution step is expected to be invalid.
+}
+```
+
+The file is located in the same folder (see below).
+
+This execution step is available for Heze and later forks. After this step, the
+inclusion list store may have been updated.
+
 #### Checks step
 
 The checks to verify the current status of `store`.
@@ -317,11 +338,19 @@ Each file is an SSZ-snappy encoded `SignedExecutionPayloadEnvelope`.
 
 Each file is an SSZ-snappy encoded `PayloadAttestationMessage`.
 
+### `inclusion_list_<32-byte-root>.ssz_snappy`
+
+`<32-byte-root>` is the hash tree root of the given signed inclusion list.
+
+Each file is an SSZ-snappy encoded `SignedInclusionList`.
+
 ## Condition
 
 1. Deserialize `anchor_state.ssz_snappy` and `anchor_block.ssz_snappy` to
    initialize the local store object with
-   `get_forkchoice_store(anchor_state, anchor_block)` helper.
+   `get_forkchoice_store(anchor_state, anchor_block)` helper. For Heze and later
+   forks, initialize an empty inclusion list store and retain it throughout the
+   test.
 2. Iterate sequentially through `steps.yaml`
    - For each execution, look up the corresponding ssz_snappy file. Execute the
      corresponding helper function on the current store.
@@ -340,5 +369,8 @@ Each file is an SSZ-snappy encoded `PayloadAttestationMessage`.
      - For the `on_payload_attestation_message` execution step: look up the
        corresponding `payload_attestation_message_<root>.ssz_snappy` file and
        execute `on_payload_attestation_message(store, ptc_message)`.
+     - For the `on_inclusion_list` execution step: look up the corresponding
+       `inclusion_list_<root>.ssz_snappy` file and execute
+       `on_inclusion_list(store, signed_inclusion_list)`.
    - For each `checks` step, the assertions on the current store must be
      satisfied.

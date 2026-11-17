@@ -12,6 +12,7 @@ from eth_consensus_specs.test.helpers.constants import GLOAS
 from eth_consensus_specs.test.helpers.fork_choice import (
     get_genesis_forkchoice_store_and_block,
 )
+from eth_consensus_specs.test.helpers.gloas.bid import record_block_in_store
 from eth_consensus_specs.test.helpers.gloas.proposer_preferences import (
     build_signed_proposer_preferences,
     find_upcoming_proposal_slot,
@@ -51,9 +52,7 @@ def setup_store_with_advanced_state(spec, state, target_slot):
     blocks = [signed_anchor]
     signed_blocks, post_states = advance_state_with_blocks(spec, state, target_slot)
     for signed_block, post_state in zip(signed_blocks, post_states, strict=True):
-        block_root = signed_block.message.hash_tree_root()
-        store.blocks[block_root] = signed_block.message
-        store.block_states[block_root] = post_state
+        record_block_in_store(spec, store, signed_block, post_state)
         blocks.append(signed_block)
     return store, blocks
 
@@ -1199,9 +1198,7 @@ def test_gossip_proposer_preferences__valid_dependent_block_on_fork(spec, state)
         block = build_empty_block_for_next_slot(spec, fork_state)
         block.body.graffiti = spec.Bytes32(b"\x42" * 32)
         signed_fork_block = state_transition_and_sign_block(spec, fork_state, block)
-        block_root = signed_fork_block.message.hash_tree_root()
-        store.blocks[block_root] = signed_fork_block.message
-        store.block_states[block_root] = fork_state.copy()
+        record_block_in_store(spec, store, signed_fork_block, fork_state.copy())
         fork_blocks.append(signed_fork_block)
     dependent_root = fork_blocks[0].message.hash_tree_root()
     assert store.blocks[dependent_root].slot == lookahead_start_slot - 1
@@ -1269,9 +1266,7 @@ def test_gossip_proposer_preferences__valid_dependent_block_across_empty_epochs(
     # Skip both epochs, then import the first block at the lookahead boundary.
     boundary_block = build_empty_block(spec, state, slot=lookahead_start_slot)
     signed_boundary_block = state_transition_and_sign_block(spec, state, boundary_block)
-    boundary_root = signed_boundary_block.message.hash_tree_root()
-    store.blocks[boundary_root] = signed_boundary_block.message
-    store.block_states[boundary_root] = state.copy()
+    boundary_root = record_block_in_store(spec, store, signed_boundary_block, state.copy())
     blocks.append(signed_boundary_block)
     validation_state = state.copy()
 

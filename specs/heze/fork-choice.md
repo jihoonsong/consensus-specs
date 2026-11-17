@@ -15,12 +15,17 @@
   - [Modified `PayloadAttributes`](#modified-payloadattributes)
   - [Modified `Store`](#modified-store)
   - [Modified `get_forkchoice_store`](#modified-get_forkchoice_store)
+  - [New `record_block_inclusion_list_bits_satisfaction`](#new-record_block_inclusion_list_bits_satisfaction)
+  - [New `is_block_inclusion_list_bits_satisfied`](#new-is_block_inclusion_list_bits_satisfied)
   - [New `record_payload_inclusion_list_satisfaction`](#new-record_payload_inclusion_list_satisfaction)
   - [New `is_payload_inclusion_list_satisfied`](#new-is_payload_inclusion_list_satisfied)
   - [Modified `should_extend_payload`](#modified-should_extend_payload)
+  - [New `get_inclusive_head`](#new-get_inclusive_head)
+  - [Modified `get_head`](#modified-get_head)
   - [New `get_inclusion_list_due_ms`](#new-get_inclusion_list_due_ms)
 - [Handlers](#handlers)
   - [New `on_inclusion_list`](#new-on_inclusion_list)
+  - [Modified `on_block`](#modified-on_block)
   - [Modified `on_execution_payload_envelope`](#modified-on_execution_payload_envelope)
 
 <!-- mdformat-toc end -->
@@ -106,8 +111,9 @@ class PayloadAttributes:
 
 ### Modified `Store`
 
-*Note*: `Store` is modified to track whether the execution payloads satisfy the
-inclusion list constraints.
+*Note*: `Store` is modified to track whether execution payloads satisfy the
+inclusion list constraints and whether beacon blocks have inclusive inclusion
+list bits.
 
 ```python
 @dataclass
@@ -131,6 +137,8 @@ class Store:
     payload_data_availability_vote: dict[Root, list[Boolean | None]]
     # [New in Heze:EIP7805]
     payload_inclusion_list_satisfaction: dict[Root, bool]
+    # [New in Heze:EIP7805]
+    block_inclusion_list_bits_satisfaction: dict[Root, bool]
 ```
 
 ### Modified `get_forkchoice_store`
@@ -163,7 +171,40 @@ def get_forkchoice_store(anchor_state: BeaconState, anchor_block: BeaconBlock) -
         payload_data_availability_vote={anchor_root: [None] * PTC_SIZE},
         # [New in Heze:EIP7805]
         payload_inclusion_list_satisfaction={anchor_root: True},
+        # [New in Heze:EIP7805]
+        block_inclusion_list_bits_satisfaction={anchor_root: True},
     )
+```
+
+### New `record_block_inclusion_list_bits_satisfaction`
+
+```python
+def record_block_inclusion_list_bits_satisfaction(store: Store, root: Root) -> None:
+    state = store.block_states[root]
+    slot = state.slot - 1
+    dependent_root = get_shuffling_dependent_root(store, root, compute_epoch_at_slot(slot))
+    store.block_inclusion_list_bits_satisfaction[root] = is_inclusion_list_bits_inclusive(
+        get_inclusion_list_store(),
+        get_inclusion_list_committee(state, slot),
+        slot,
+        dependent_root,
+        state.latest_execution_payload_bid.inclusion_list_bits,
+        only_timely=True,
+    )
+```
+
+### New `is_block_inclusion_list_bits_satisfied`
+
+```python
+def is_block_inclusion_list_bits_satisfied(store: Store, root: Root) -> bool:
+    """
+    Return whether the beacon block with root ``root`` had inclusive inclusion list bits
+    when it was imported.
+    """
+    # The beacon block root must be known
+    assert root in store.block_inclusion_list_bits_satisfaction
+
+    return store.block_inclusion_list_bits_satisfaction[root]
 ```
 
 ### New `record_payload_inclusion_list_satisfaction`
@@ -244,6 +285,57 @@ def should_extend_payload(store: Store, root: Root) -> bool:
     )
 ```
 
+### New `get_inclusive_head`
+
+```python
+def get_inclusion_list_bits_inclusive_head(store: Store, head: ForkChoiceNode) -> ForkChoiceNode:
+    while (
+        head.root != store.justified_checkpoint.root
+        and not is_block_inclusion_list_bits_satisfied(store, head.root)
+    ):
+        head = get_ancestor(store, head, store.blocks[head.root].slot - 1)
+    return head
+```
+
+### Modified `get_head`
+
+*Note*: `get_head` walks back to an ancestor with inclusive inclusion list bits,
+without going past the justified checkpoint.
+
+```python
+def get_head(store: Store) -> ForkChoiceNode:
+    # Get filtered node tree that only includes viable branches
+    nodes = get_filtered_node_tree(store)
+
+    # Return empty node if there are no viable nodes
+    if not any(nodes):
+        return ForkChoiceNode(
+            root=store.justified_checkpoint.root,
+            payload_status=PAYLOAD_STATUS_EMPTY,
+        )
+
+    # Execute the LMD-GHOST fork-choice
+    head = ForkChoiceNode(
+        root=store.justified_checkpoint.root,
+        payload_status=PAYLOAD_STATUS_PENDING,
+    )
+
+    while True:
+        children = [child for child in get_node_children(store, head) if child in nodes]
+        if len(children) == 0:
+            # [New in Heze:EIP7805]
+            return get_inclusion_list_bits_inclusive_head(store, head)
+        # Sort by latest attesting balance with ties broken lexicographically
+        head = max(
+            children,
+            key=lambda child: (
+                get_weight(store, child),
+                child.root,
+                get_payload_status_tiebreaker(store, child),
+            ),
+        )
+```
+
 ### New `get_inclusion_list_due_ms`
 
 ```python
@@ -309,6 +401,77 @@ def on_inclusion_list(store: Store, signed_inclusion_list: SignedInclusionList) 
 
     # Process the inclusion list
     process_inclusion_list(get_inclusion_list_store(), signed_inclusion_list, is_timely)
+```
+
+### Modified `on_block`
+
+*Note*: `on_block` records whether the block has inclusive inclusion list bits.
+
+```python
+def on_block(store: Store, signed_block: SignedBeaconBlock) -> None:
+    """
+    Run ``on_block`` upon receiving a new block.
+    """
+    block = signed_block.message
+    block_root = hash_tree_root(block)
+
+    # Return early if the block is already known
+    if block_root in store.blocks:
+        return
+
+    # Parent block must be known
+    assert block.parent_root in store.block_states
+
+    # If this block builds on the parent's full payload, that payload must
+    # have been verified by on_execution_payload_envelope
+    if is_parent_node_full(store, block):
+        assert is_payload_verified(store, block.parent_root)
+
+    # Blocks cannot be in the future. If they are, their consideration must be delayed until they are in the past.
+    current_slot = get_current_slot(store)
+    assert current_slot >= block.slot
+
+    # Check that block is later than the finalized epoch slot (optimization to reduce calls to get_ancestor)
+    finalized_slot = compute_start_slot_at_epoch(store.finalized_checkpoint.epoch)
+    assert block.slot > finalized_slot
+    # Check block is a descendant of the finalized block at the checkpoint finalized slot
+    finalized_checkpoint_block = get_checkpoint_block(
+        store,
+        block.parent_root,
+        store.finalized_checkpoint.epoch,
+    )
+    assert store.finalized_checkpoint.root == finalized_checkpoint_block
+
+    # Make a copy of the state to avoid mutability issues
+    state = store.block_states[block.parent_root].copy()
+
+    # Check the block is valid and compute the post-state
+    state_transition(state, signed_block, validate_result=True)
+
+    # Compute head before applying the block
+    head = get_head(store)
+    # Add new block to the store
+    store.blocks[block_root] = block
+    # Add new state for this block to the store
+    store.block_states[block_root] = state
+    # Add a new PTC voting for this block to the store
+    store.payload_timeliness_vote[block_root] = [None] * PTC_SIZE
+    store.payload_data_availability_vote[block_root] = [None] * PTC_SIZE
+
+    # Notify the store about the payload_attestations in the block
+    notify_ptc_messages(store, state, block.body.payload_attestations)
+
+    record_block_timeliness(store, block_root)
+    update_proposer_boost_root(store, head.root, block_root)
+
+    # [New in Heze:EIP7805]
+    record_block_inclusion_list_bits_satisfaction(store, block_root)
+
+    # Update checkpoints in store if necessary
+    update_checkpoints(store, state.current_justified_checkpoint, state.finalized_checkpoint)
+
+    # Eagerly compute unrealized justification and finality.
+    compute_pulled_up_tip(store, block_root)
 ```
 
 ### Modified `on_execution_payload_envelope`

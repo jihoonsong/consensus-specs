@@ -11,6 +11,7 @@ from eth_consensus_specs.test.helpers.block import sign_block
 from eth_consensus_specs.test.helpers.fork_choice import (
     get_genesis_forkchoice_store_and_block,
 )
+from eth_consensus_specs.test.helpers.gloas.bid import record_block_in_store
 from eth_consensus_specs.test.helpers.gossip import (
     get_filename,
     get_seen,
@@ -32,9 +33,7 @@ def setup_gloas_sidecar(spec, state, block_in_store=True):
     signed_block = state_transition_and_sign_block(spec, state, block)
     sidecars = get_data_column_sidecars(spec, signed_block, blobs)
     if block_in_store:
-        block_root = signed_block.message.hash_tree_root()
-        store.blocks[block_root] = signed_block.message
-        store.block_states[block_root] = state.copy()
+        record_block_in_store(spec, store, signed_block, state.copy())
     return store, signed_anchor, signed_block, sidecars[0]
 
 

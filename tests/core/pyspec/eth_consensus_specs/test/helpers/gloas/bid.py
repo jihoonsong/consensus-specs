@@ -49,6 +49,8 @@ def record_block_in_store(spec, store, signed_block, post_state):
     store.block_states[block_root] = post_state
     store.payload_timeliness_vote[block_root] = [None] * spec.PTC_SIZE
     store.payload_data_availability_vote[block_root] = [None] * spec.PTC_SIZE
+    if is_post_heze(spec):
+        spec.record_block_inclusion_list_bits_satisfaction(store, block_root)
     return block_root
 
 
